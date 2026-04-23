@@ -1,0 +1,1 @@
+export default function AdminReviews(){return<div>Admin Reviews</div>}
