@@ -4,19 +4,17 @@ import { supabase } from '../../supabaseClient'
 
 export default function MyReviews() {
   const [reviews, setReviews] = useState([])
-  const [pendingReviews, setPendingReviews] = useState([])
+  const [pendingItems, setPendingItems] = useState([]) // both bookings + bundles
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
-  const [selectedBooking, setSelectedBooking] = useState(null)
+  const [selectedItem, setSelectedItem] = useState(null)
   const [rating, setRating] = useState(5)
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [currentUser, setCurrentUser] = useState(null)
   const navigate = useNavigate()
 
-  useEffect(() => {
-    fetchData()
-  }, [])
+  useEffect(() => { fetchData() }, [])
 
   const fetchData = async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -29,11 +27,20 @@ export default function MyReviews() {
       .select(`
         review_id, rating, comment, review_date,
         booking(booking_id, service(service_name), service_date),
+        bundle_offer(bundle_id, service_date),
         service_provider(user_id, users(first_name, last_name))
       `)
       .eq('customer_id', user.id)
       .order('review_date', { ascending: false })
     setReviews(reviewData || [])
+
+    // Already reviewed booking IDs
+    const reviewedBookingIds = (reviewData || [])
+      .map(r => r.booking?.booking_id).filter(Boolean)
+
+    // Already reviewed bundle IDs
+    const reviewedBundleIds = (reviewData || [])
+      .map(r => r.bundle_offer?.bundle_id).filter(Boolean)
 
     // Get completed bookings without reviews
     const { data: bookingData } = await supabase
@@ -46,14 +53,28 @@ export default function MyReviews() {
       .eq('customer_id', user.id)
       .eq('status', 'completed')
 
-    const reviewedBookingIds = (reviewData || [])
-      .map(r => r.booking?.booking_id)
-      .filter(Boolean)
+    // Get completed bundles without reviews
+    const { data: bundleData } = await supabase
+      .from('bundle_offer')
+      .select(`
+        bundle_id, service_date, total_price,
+        bundle_service(
+          service(service_name),
+          service_provider(user_id, users(first_name, last_name))
+        )
+      `)
+      .eq('customer_id', user.id)
+      .eq('status', 'completed')
 
-    const pending = (bookingData || [])
+    const pendingBookings = (bookingData || [])
       .filter(b => !reviewedBookingIds.includes(b.booking_id))
-    setPendingReviews(pending)
+      .map(b => ({ ...b, type: 'booking' }))
 
+    const pendingBundles = (bundleData || [])
+      .filter(b => !reviewedBundleIds.includes(b.bundle_id))
+      .map(b => ({ ...b, type: 'bundle' }))
+
+    setPendingItems([...pendingBookings, ...pendingBundles])
     setLoading(false)
   }
 
@@ -61,10 +82,18 @@ export default function MyReviews() {
     if (!comment.trim()) { alert('Please write a comment'); return }
     setSubmitting(true)
 
+    const isBundle = selectedItem.type === 'bundle'
+
+    // For bundles, get first provider from bundle_service
+    const providerId = isBundle
+      ? selectedItem.bundle_service?.[0]?.service_provider?.user_id
+      : selectedItem.service_provider?.user_id
+
     const { error } = await supabase.from('review').insert({
       customer_id: currentUser.id,
-      booking_id: selectedBooking.booking_id,
-      provider_id: selectedBooking.service_provider?.user_id,
+      booking_id: isBundle ? null : selectedItem.booking_id,
+      bundle_id: isBundle ? selectedItem.bundle_id : null,
+      provider_id: providerId || null,
       rating,
       comment,
       review_date: new Date().toISOString()
@@ -76,7 +105,7 @@ export default function MyReviews() {
     setShowModal(false)
     setComment('')
     setRating(5)
-    setSelectedBooking(null)
+    setSelectedItem(null)
     fetchData()
     setSubmitting(false)
   }
@@ -92,12 +121,12 @@ export default function MyReviews() {
     : 0
 
   const sidebarItems = [
-    { label: 'Dashboard', icon: '🏠', path: '/customer/dashboard' },
+    { label: 'Dashboard',       icon: '🏠', path: '/customer/dashboard' },
     { label: 'Browse Services', icon: '🔍', path: '/customer/browse' },
-    { label: 'My Bookings', icon: '📅', path: '/customer/bookings' },
-    { label: 'Bundle Offers', icon: '📦', path: '/customer/bundles' },
-    { label: 'Payments', icon: '💳', path: '/customer/payments' },
-    { label: 'My Reviews', icon: '⭐', path: '/customer/reviews', active: true },
+    { label: 'My Bookings',     icon: '📅', path: '/customer/bookings' },
+    { label: 'Bundle Offers',   icon: '📦', path: '/customer/bundles' },
+    { label: 'Payments',        icon: '💳', path: '/customer/payments' },
+    { label: 'My Reviews',      icon: '⭐', path: '/customer/reviews', active: true },
   ]
 
   const logout = async () => {
@@ -138,19 +167,17 @@ export default function MyReviews() {
       <main style={{ marginLeft: 240, flex: 1, padding: '28px 32px' }}>
 
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>My Reviews</h1>
-            <p style={{ color: '#6b6860', marginTop: 4, fontSize: 13 }}>Reviews you've written for service providers</p>
-          </div>
+        <div style={{ marginBottom: 24 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>My Reviews</h1>
+          <p style={{ color: '#6b6860', marginTop: 4, fontSize: 13 }}>Reviews you've written for service providers</p>
         </div>
 
         {/* Stats */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
           {[
-            { label: 'Reviews Written', value: reviews.length, color: '#1a1a2e' },
-            { label: 'Avg Rating Given', value: `★ ${avgRating}`, color: '#f9a825' },
-            { label: 'Pending Reviews', value: pendingReviews.length, color: '#e65100' },
+            { label: 'Reviews Written',  value: reviews.length,       color: '#1a1a2e' },
+            { label: 'Avg Rating Given', value: `★ ${avgRating}`,     color: '#f9a825' },
+            { label: 'Pending Reviews',  value: pendingItems.length,  color: '#e65100' },
           ].map(s => (
             <div key={s.label} style={{ background: '#fff', border: '1px solid #d4d2cc', borderRadius: 10, padding: '18px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
               <div style={{ fontSize: 11, color: '#9b978f', textTransform: 'uppercase', letterSpacing: 0.8, fontFamily: 'monospace' }}>{s.label}</div>
@@ -160,36 +187,54 @@ export default function MyReviews() {
         </div>
 
         {/* Pending Reviews */}
-        {pendingReviews.length > 0 && (
+        {pendingItems.length > 0 && (
           <div style={{ background: '#fff', border: '1px solid #d4d2cc', borderRadius: 10, padding: 20, marginBottom: 24, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Pending Reviews</div>
             <div style={{ background: '#e8ecff', border: '1px solid #c5cfff', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#2a3fd4', marginBottom: 16 }}>
-              You have {pendingReviews.length} completed booking(s) awaiting your review.
+              You have {pendingItems.length} completed item(s) awaiting your review.
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f4f3f0' }}>
-                  {['Service', 'Provider', 'Service Date', 'Action'].map(h => (
+                  {['Type', 'Service / Bundle', 'Provider', 'Date', 'Action'].map(h => (
                     <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: '#9b978f', fontFamily: 'monospace', borderBottom: '1px solid #d4d2cc' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {pendingReviews.map(b => (
-                  <tr key={b.booking_id} style={{ borderBottom: '1px solid #f0ede8' }}>
-                    <td style={{ padding: '12px 14px', fontSize: 13, fontWeight: 500 }}>{b.service?.service_name}</td>
-                    <td style={{ padding: '12px 14px', fontSize: 13 }}>
-                      {b.service_provider?.users?.first_name} {b.service_provider?.users?.last_name}
-                    </td>
-                    <td style={{ padding: '12px 14px', fontSize: 13 }}>{b.service_date}</td>
-                    <td style={{ padding: '12px 14px' }}>
-                      <button onClick={() => { setSelectedBooking(b); setShowModal(true) }}
-                        style={{ padding: '6px 14px', background: '#3d5afe', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
-                        Write Review
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {pendingItems.map(item => {
+                  const isBundle = item.type === 'bundle'
+                  const key = isBundle ? item.bundle_id : item.booking_id
+                  const serviceName = isBundle
+                    ? `Bundle (${item.bundle_service?.length || 0} services)`
+                    : item.service?.service_name
+                  const providerName = isBundle
+                    ? item.bundle_service?.[0]?.service_provider?.users
+                      ? `${item.bundle_service[0].service_provider.users.first_name} ${item.bundle_service[0].service_provider.users.last_name}`
+                      : '—'
+                    : item.service_provider?.users
+                      ? `${item.service_provider.users.first_name} ${item.service_provider.users.last_name}`
+                      : '—'
+
+                  return (
+                    <tr key={key} style={{ borderBottom: '1px solid #f0ede8' }}>
+                      <td style={{ padding: '12px 14px' }}>
+                        <span style={{ background: isBundle ? '#e8ecff' : '#e8f5e9', color: isBundle ? '#3d5afe' : '#2e7d32', padding: '3px 8px', borderRadius: 20, fontSize: 11, fontFamily: 'monospace' }}>
+                          {isBundle ? '📦 Bundle' : '📅 Booking'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px 14px', fontSize: 13, fontWeight: 500 }}>{serviceName}</td>
+                      <td style={{ padding: '12px 14px', fontSize: 13 }}>{providerName}</td>
+                      <td style={{ padding: '12px 14px', fontSize: 13 }}>{item.service_date}</td>
+                      <td style={{ padding: '12px 14px' }}>
+                        <button onClick={() => { setSelectedItem(item); setShowModal(true) }}
+                          style={{ padding: '6px 14px', background: '#3d5afe', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                          Write Review
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -204,41 +249,51 @@ export default function MyReviews() {
               <p style={{ fontSize: 13 }}>No reviews yet. Complete a booking to leave a review!</p>
             </div>
           ) : (
-            reviews.map(r => (
-              <div key={r.review_id} style={{ border: '1px solid #d4d2cc', borderRadius: 10, padding: 16, marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>
-                      Review for: {r.service_provider?.users?.first_name} {r.service_provider?.users?.last_name}
+            reviews.map(r => {
+              const isBundle = !!r.bundle_offer?.bundle_id
+              return (
+                <div key={r.review_id} style={{ border: '1px solid #d4d2cc', borderRadius: 10, padding: 16, marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        <span style={{ background: isBundle ? '#e8ecff' : '#e8f5e9', color: isBundle ? '#3d5afe' : '#2e7d32', padding: '2px 8px', borderRadius: 20, fontSize: 10, fontFamily: 'monospace' }}>
+                          {isBundle ? '📦 Bundle' : '📅 Booking'}
+                        </span>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>
+                          Review for: {r.service_provider?.users?.first_name} {r.service_provider?.users?.last_name}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#9b978f' }}>
+                        {isBundle
+                          ? `Bundle · ${r.bundle_offer?.service_date}`
+                          : `${r.booking?.service?.service_name} · ${r.booking?.service_date}`}
+                      </div>
                     </div>
-                    <div style={{ fontSize: 11, color: '#9b978f', marginTop: 2 }}>
-                      {r.booking?.service?.service_name} · {r.booking?.service_date}
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ color: '#f9a825', fontSize: 16 }}>
+                        {'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#9b978f', marginTop: 2 }}>
+                        {new Date(r.review_date).toLocaleDateString()}
+                      </div>
                     </div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ color: '#f9a825', fontSize: 16 }}>
-                      {'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#9b978f', marginTop: 2 }}>
-                      {new Date(r.review_date).toLocaleDateString()}
-                    </div>
+                  <p style={{ fontSize: 13, color: '#6b6860', lineHeight: 1.6, margin: 0 }}>{r.comment}</p>
+                  <div style={{ marginTop: 10 }}>
+                    <button onClick={() => deleteReview(r.review_id)}
+                      style={{ padding: '5px 12px', background: '#fce4ec', color: '#b71c1c', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
+                      Delete
+                    </button>
                   </div>
                 </div>
-                <p style={{ fontSize: 13, color: '#6b6860', lineHeight: 1.6, margin: 0 }}>{r.comment}</p>
-                <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                  <button onClick={() => deleteReview(r.review_id)}
-                    style={{ padding: '5px 12px', background: '#fce4ec', color: '#b71c1c', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       </main>
 
       {/* REVIEW MODAL */}
-      {showModal && (
+      {showModal && selectedItem && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
           onClick={e => { if (e.target === e.currentTarget) setShowModal(false) }}>
           <div style={{ background: '#fff', borderRadius: 14, padding: 28, width: 460, maxWidth: '95vw', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}>
@@ -248,12 +303,20 @@ export default function MyReviews() {
                 style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#9b978f' }}>✕</button>
             </div>
 
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
-                {selectedBooking?.service?.service_name}
+            {/* Item Info */}
+            <div style={{ background: '#f4f3f0', borderRadius: 8, padding: '12px 14px', marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                {selectedItem.type === 'bundle'
+                  ? `Bundle (${selectedItem.bundle_service?.length || 0} services)`
+                  : selectedItem.service?.service_name}
               </div>
-              <div style={{ fontSize: 12, color: '#9b978f' }}>
-                by {selectedBooking?.service_provider?.users?.first_name} {selectedBooking?.service_provider?.users?.last_name}
+              <div style={{ fontSize: 12, color: '#9b978f', marginTop: 4 }}>
+                {selectedItem.type === 'bundle'
+                  ? selectedItem.bundle_service?.map(bs => bs.service?.service_name).join(', ')
+                  : `by ${selectedItem.service_provider?.users?.first_name} ${selectedItem.service_provider?.users?.last_name}`}
+              </div>
+              <div style={{ fontSize: 11, color: '#9b978f', marginTop: 2 }}>
+                Service Date: {selectedItem.service_date}
               </div>
             </div>
 
