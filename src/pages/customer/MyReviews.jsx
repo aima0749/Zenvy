@@ -1,113 +1,65 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../supabaseClient'
+import Sidebar, { PageLayout, StatGrid, useIsMobile, T, s } from '../../components/Sidebar'
+
+const NAV = [
+  { label:'Dashboard',      icon:'◉', path:'/customer/dashboard' },
+  { label:'Browse Services',icon:'◈', path:'/customer/browse' },
+  { label:'My Bookings',    icon:'◇', path:'/customer/bookings' },
+  { label:'Bundle Offers',  icon:'◎', path:'/customer/bundles' },
+  { label:'Payments',       icon:'◷', path:'/customer/payments' },
+  { label:'My Reviews',     icon:'♡', path:'/customer/reviews', active:true },
+]
 
 export default function MyReviews() {
-  const [reviews, setReviews] = useState([])
-  const [pendingItems, setPendingItems] = useState([]) // both bookings + bundles
-  const [loading, setLoading] = useState(true)
-  const [showModal, setShowModal] = useState(false)
-  const [selectedItem, setSelectedItem] = useState(null)
-  const [rating, setRating] = useState(5)
-  const [comment, setComment] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [currentUser, setCurrentUser] = useState(null)
+  const [reviews, setReviews]           = useState([])
+  const [completedBookings, setCompletedBookings] = useState([])
+  const [loading, setLoading]           = useState(true)
+  const [showAdd, setShowAdd]           = useState(false)
+  const [form, setForm]                 = useState({ booking_id:'', rating:5, comment:'' })
+  const [saving, setSaving]             = useState(false)
+  const [user, setUser] = useState(null)
   const navigate = useNavigate()
 
   useEffect(() => { fetchData() }, [])
 
   const fetchData = async () => {
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data:{ user } } = await supabase.auth.getUser()
     if (!user) { navigate('/auth'); return }
-    setCurrentUser(user)
 
-    // Get existing reviews
-    const { data: reviewData } = await supabase
-      .from('review')
-      .select(`
-        review_id, rating, comment, review_date,
-        booking(booking_id, service(service_name), service_date),
-        bundle_offer(bundle_id, service_date),
-        service_provider(user_id, users(first_name, last_name))
-      `)
-      .eq('customer_id', user.id)
-      .order('review_date', { ascending: false })
-    setReviews(reviewData || [])
+    const { data: reviewData, error } = await supabase.from('review')
+      .select('review_id,rating,comment,review_date,service_provider(user_id,users(first_name,last_name)),booking(booking_id,service(service_name),service_date)')
+      .eq('customer_id', user.id).order('review_date',{ascending:false})
+    console.log('reviews:', reviewData, error)
+    setReviews(reviewData||[])
 
-    // Already reviewed booking IDs
-    const reviewedBookingIds = (reviewData || [])
-      .map(r => r.booking?.booking_id).filter(Boolean)
+    const { data: bookingData } = await supabase.from('booking')
+      .select('booking_id,service(service_name),service_date,provider_id,service_provider(user_id,users(first_name,last_name))')
+      .eq('customer_id', user.id).eq('status','completed')
+    const reviewedBookingIds = (reviewData||[]).map(r=>r.booking?.booking_id).filter(Boolean)
+    setCompletedBookings((bookingData||[]).filter(b=>!reviewedBookingIds.includes(b.booking_id)))
 
-    // Already reviewed bundle IDs
-    const reviewedBundleIds = (reviewData || [])
-      .map(r => r.bundle_offer?.bundle_id).filter(Boolean)
-
-    // Get completed bookings without reviews
-    const { data: bookingData } = await supabase
-      .from('booking')
-      .select(`
-        booking_id, service_date,
-        service(service_name),
-        service_provider(user_id, users(first_name, last_name))
-      `)
-      .eq('customer_id', user.id)
-      .eq('status', 'completed')
-
-    // Get completed bundles without reviews
-    const { data: bundleData } = await supabase
-      .from('bundle_offer')
-      .select(`
-        bundle_id, service_date, total_price,
-        bundle_service(
-          service(service_name),
-          service_provider(user_id, users(first_name, last_name))
-        )
-      `)
-      .eq('customer_id', user.id)
-      .eq('status', 'completed')
-
-    const pendingBookings = (bookingData || [])
-      .filter(b => !reviewedBookingIds.includes(b.booking_id))
-      .map(b => ({ ...b, type: 'booking' }))
-
-    const pendingBundles = (bundleData || [])
-      .filter(b => !reviewedBundleIds.includes(b.bundle_id))
-      .map(b => ({ ...b, type: 'bundle' }))
-
-    setPendingItems([...pendingBookings, ...pendingBundles])
     setLoading(false)
   }
 
   const submitReview = async () => {
-    if (!comment.trim()) { alert('Please write a comment'); return }
-    setSubmitting(true)
-
-    const isBundle = selectedItem.type === 'bundle'
-
-    // For bundles, get first provider from bundle_service
-    const providerId = isBundle
-      ? selectedItem.bundle_service?.[0]?.service_provider?.user_id
-      : selectedItem.service_provider?.user_id
-
+    if (!form.booking_id) { alert('Please select a booking'); return }
+    if (!form.comment.trim()) { alert('Please write a comment'); return }
+    setSaving(true)
+    const { data:{ user } } = await supabase.auth.getUser()
+    const booking = completedBookings.find(b=>b.booking_id===form.booking_id)
     const { error } = await supabase.from('review').insert({
-      customer_id: currentUser.id,
-      booking_id: isBundle ? null : selectedItem.booking_id,
-      bundle_id: isBundle ? selectedItem.bundle_id : null,
-      provider_id: providerId || null,
-      rating,
-      comment,
+      customer_id: user.id,
+      provider_id: booking?.provider_id || booking?.service_provider?.user_id,
+      booking_id: form.booking_id,
+      rating: form.rating,
+      comment: form.comment,
       review_date: new Date().toISOString()
     })
-
-    if (error) { alert('Error: ' + error.message); setSubmitting(false); return }
-
-    alert('Review submitted! ✅')
-    setShowModal(false)
-    setComment('')
-    setRating(5)
-    setSelectedItem(null)
-    fetchData()
-    setSubmitting(false)
+    if (error) { alert('Error: '+error.message); setSaving(false); return }
+    setForm({ booking_id:'', rating:5, comment:'' })
+    setShowAdd(false); fetchData(); setSaving(false)
   }
 
   const deleteReview = async (reviewId) => {
@@ -116,244 +68,102 @@ export default function MyReviews() {
     fetchData()
   }
 
-  const avgRating = reviews.length > 0
-    ? (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(1)
-    : 0
+  const avgRating = reviews.length>0 ? (reviews.reduce((sum,r)=>sum+r.rating,0)/reviews.length).toFixed(1) : 0
 
-  const sidebarItems = [
-    { label: 'Dashboard',       icon: '🏠', path: '/customer/dashboard' },
-    { label: 'Browse Services', icon: '🔍', path: '/customer/browse' },
-    { label: 'My Bookings',     icon: '📅', path: '/customer/bookings' },
-    { label: 'Bundle Offers',   icon: '📦', path: '/customer/bundles' },
-    { label: 'Payments',        icon: '💳', path: '/customer/payments' },
-    { label: 'My Reviews',      icon: '⭐', path: '/customer/reviews', active: true },
-  ]
-
-  const logout = async () => {
-    await supabase.auth.signOut()
-    navigate('/auth')
-  }
-
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-      <p>Loading...</p>
-    </div>
-  )
+  if (loading) return <div style={s.loading}>Loading…</div>
 
   return (
-    <div style={{ display: 'flex', fontFamily: 'Arial', minHeight: '100vh', background: '#f4f3f0' }}>
-
-      {/* SIDEBAR */}
-      <aside style={{ width: 240, background: '#1e1e2e', display: 'flex', flexDirection: 'column', position: 'fixed', top: 0, left: 0, bottom: 0 }}>
-        <div style={{ padding: '24px 20px 16px', fontSize: 22, fontWeight: 700, color: '#fff', borderBottom: '1px solid #2e2e42' }}>
-          <span style={{ color: '#3d5afe' }}>Z</span>envy
-        </div>
-        <nav style={{ flex: 1, paddingTop: 12 }}>
-          {sidebarItems.map(item => (
-            <div key={item.path} onClick={() => navigate(item.path)}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px', cursor: 'pointer', fontSize: 13, color: item.active ? '#fff' : '#c8c4bc', background: item.active ? '#3a3a52' : 'transparent', borderLeft: item.active ? '3px solid #3d5afe' : '3px solid transparent' }}>
-              <span>{item.icon}</span> {item.label}
-            </div>
-          ))}
-        </nav>
-        <div style={{ padding: '16px 0', borderTop: '1px solid #2e2e42' }}>
-          <div onClick={logout} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px', cursor: 'pointer', color: '#e57373', fontSize: 13 }}>
-            <span>⬅️</span> Logout
-          </div>
-        </div>
-      </aside>
-
-      {/* MAIN */}
-      <main style={{ marginLeft: 240, flex: 1, padding: '28px 32px' }}>
-
-        {/* Header */}
-        <div style={{ marginBottom: 24 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>My Reviews</h1>
-          <p style={{ color: '#6b6860', marginTop: 4, fontSize: 13 }}>Reviews you've written for service providers</p>
+    <div style={s.page}>
+      <Sidebar items={NAV} userName={`${user?.first_name||''} ${user?.last_name||''}`} userRole="Customer" />
+      <PageLayout>
+        <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginBottom:22, paddingBottom:16, borderBottom:`2px solid ${T.mixBorder}` }}>
+          <div><h1 style={s.h1}>My Reviews</h1><p style={s.sub}>Share your feedback on completed services</p></div>
+          {completedBookings.length>0 && <button onClick={()=>setShowAdd(true)} style={s.btn}>+ Write Review</button>}
         </div>
 
-        {/* Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
-          {[
-            { label: 'Reviews Written',  value: reviews.length,       color: '#1a1a2e' },
-            { label: 'Avg Rating Given', value: `★ ${avgRating}`,     color: '#f9a825' },
-            { label: 'Pending Reviews',  value: pendingItems.length,  color: '#e65100' },
-          ].map(s => (
-            <div key={s.label} style={{ background: '#fff', border: '1px solid #d4d2cc', borderRadius: 10, padding: '18px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-              <div style={{ fontSize: 11, color: '#9b978f', textTransform: 'uppercase', letterSpacing: 0.8, fontFamily: 'monospace' }}>{s.label}</div>
-              <div style={{ fontSize: 28, fontWeight: 700, marginTop: 6, color: s.color }}>{s.value}</div>
-            </div>
+        <div style={{...s.statGrid,gridTemplateColumns:'repeat(3,1fr)'}}>
+          {[{label:'Reviews Written',value:reviews.length,color:T.ink},{label:'Avg Rating',value:reviews.length>0?`★ ${avgRating}`:'—',color:'#d97706'},{label:'Pending Reviews',value:completedBookings.length,color:T.blue}].map(st=>(
+            <div key={st.label} style={s.statCard}><div style={s.statLabel}>{st.label}</div><div style={{...s.statNum,color:st.color}}>{st.value}</div></div>
           ))}
         </div>
 
-        {/* Pending Reviews */}
-        {pendingItems.length > 0 && (
-          <div style={{ background: '#fff', border: '1px solid #d4d2cc', borderRadius: 10, padding: 20, marginBottom: 24, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Pending Reviews</div>
-            <div style={{ background: '#e8ecff', border: '1px solid #c5cfff', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#2a3fd4', marginBottom: 16 }}>
-              You have {pendingItems.length} completed item(s) awaiting your review.
-            </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: '#f4f3f0' }}>
-                  {['Type', 'Service / Bundle', 'Provider', 'Date', 'Action'].map(h => (
-                    <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: '#9b978f', fontFamily: 'monospace', borderBottom: '1px solid #d4d2cc' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pendingItems.map(item => {
-                  const isBundle = item.type === 'bundle'
-                  const key = isBundle ? item.bundle_id : item.booking_id
-                  const serviceName = isBundle
-                    ? `Bundle (${item.bundle_service?.length || 0} services)`
-                    : item.service?.service_name
-                  const providerName = isBundle
-                    ? item.bundle_service?.[0]?.service_provider?.users
-                      ? `${item.bundle_service[0].service_provider.users.first_name} ${item.bundle_service[0].service_provider.users.last_name}`
-                      : '—'
-                    : item.service_provider?.users
-                      ? `${item.service_provider.users.first_name} ${item.service_provider.users.last_name}`
-                      : '—'
-
-                  return (
-                    <tr key={key} style={{ borderBottom: '1px solid #f0ede8' }}>
-                      <td style={{ padding: '12px 14px' }}>
-                        <span style={{ background: isBundle ? '#e8ecff' : '#e8f5e9', color: isBundle ? '#3d5afe' : '#2e7d32', padding: '3px 8px', borderRadius: 20, fontSize: 11, fontFamily: 'monospace' }}>
-                          {isBundle ? '📦 Bundle' : '📅 Booking'}
-                        </span>
-                      </td>
-                      <td style={{ padding: '12px 14px', fontSize: 13, fontWeight: 500 }}>{serviceName}</td>
-                      <td style={{ padding: '12px 14px', fontSize: 13 }}>{providerName}</td>
-                      <td style={{ padding: '12px 14px', fontSize: 13 }}>{item.service_date}</td>
-                      <td style={{ padding: '12px 14px' }}>
-                        <button onClick={() => { setSelectedItem(item); setShowModal(true) }}
-                          style={{ padding: '6px 14px', background: '#3d5afe', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
-                          Write Review
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+        {completedBookings.length>0 && (
+          <div style={{background:`linear-gradient(135deg,${T.bluePale},${T.purplePale})`,border:`2px solid ${T.mixBorder}`,borderRadius:12,padding:'14px 18px',marginBottom:20,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{fontSize:13,fontWeight:700,color:T.ink}}>💬 You have {completedBookings.length} completed booking{completedBookings.length!==1?'s':''} awaiting review</div>
+            <button onClick={()=>setShowAdd(true)} style={s.btn}>Write Now →</button>
           </div>
         )}
 
-        {/* Reviews Written */}
-        <div style={{ background: '#fff', border: '1px solid #d4d2cc', borderRadius: 10, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Reviews You've Written</div>
-          {reviews.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#9b978f' }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>⭐</div>
-              <p style={{ fontSize: 13 }}>No reviews yet. Complete a booking to leave a review!</p>
-            </div>
-          ) : (
-            reviews.map(r => {
-              const isBundle = !!r.bundle_offer?.bundle_id
+        {reviews.length===0 ? (
+          <div style={{...s.card,textAlign:'center',padding:'50px 20px',color:T.muted}}>
+            <div style={{fontSize:36,opacity:0.3,marginBottom:12}}>♡</div>
+            <p style={{fontWeight:600}}>No reviews yet. Complete a booking to leave feedback!</p>
+          </div>
+        ) : (
+          <div style={{display:'flex',flexDirection:'column',gap:14}}>
+            {reviews.map(r => {
+              const sentBadge = r.rating>=4?{bg:'#f0fdf4',color:'#15803d',border:'#86efac'}:r.rating===3?{bg:'#fff7ed',color:'#c2410c',border:'#fdba74'}:{bg:'#fff1f2',color:'#be123c',border:'#fda4af'}
               return (
-                <div key={r.review_id} style={{ border: '1px solid #d4d2cc', borderRadius: 10, padding: 16, marginBottom: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div key={r.review_id} style={s.card}>
+                  <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:12,flexWrap:'wrap',gap:10}}>
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        <span style={{ background: isBundle ? '#e8ecff' : '#e8f5e9', color: isBundle ? '#3d5afe' : '#2e7d32', padding: '2px 8px', borderRadius: 20, fontSize: 10, fontFamily: 'monospace' }}>
-                          {isBundle ? '📦 Bundle' : '📅 Booking'}
-                        </span>
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>
-                          Review for: {r.service_provider?.users?.first_name} {r.service_provider?.users?.last_name}
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 11, color: '#9b978f' }}>
-                        {isBundle
-                          ? `Bundle · ${r.bundle_offer?.service_date}`
-                          : `${r.booking?.service?.service_name} · ${r.booking?.service_date}`}
+                      <div style={{fontWeight:800,fontSize:14,color:T.ink}}>{r.booking?.service?.service_name||'—'}</div>
+                      <div style={{fontSize:12,color:T.muted,marginTop:2,fontWeight:600}}>
+                        Provider: {r.service_provider?.users?.first_name} {r.service_provider?.users?.last_name} · {r.booking?.service_date||'—'}
                       </div>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ color: '#f9a825', fontSize: 16 }}>
-                        {'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}
+                    <div style={{display:'flex',alignItems:'center',gap:10}}>
+                      <div style={{textAlign:'right'}}>
+                        <div style={{color:'#d97706',fontSize:18}}>{'★'.repeat(r.rating)}<span style={{color:T.mixBorder}}>{'★'.repeat(5-r.rating)}</span></div>
+                        <div style={{fontSize:11,color:T.muted,fontWeight:600}}>{new Date(r.review_date).toLocaleDateString()}</div>
                       </div>
-                      <div style={{ fontSize: 11, color: '#9b978f', marginTop: 2 }}>
-                        {new Date(r.review_date).toLocaleDateString()}
-                      </div>
+                      <button onClick={()=>deleteReview(r.review_id)} style={s.btnSm('#fff1f2','#be123c','#fda4af')}>Delete</button>
                     </div>
                   </div>
-                  <p style={{ fontSize: 13, color: '#6b6860', lineHeight: 1.6, margin: 0 }}>{r.comment}</p>
-                  <div style={{ marginTop: 10 }}>
-                    <button onClick={() => deleteReview(r.review_id)}
-                      style={{ padding: '5px 12px', background: '#fce4ec', color: '#b71c1c', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
-                      Delete
-                    </button>
-                  </div>
+                  <p style={{fontSize:13,color:T.ink,lineHeight:1.7,margin:0,padding:'12px 14px',background:T.mixPale,borderRadius:8,borderLeft:`3px solid ${T.blueLight}`,fontWeight:600}}>"{r.comment}"</p>
+                  <div style={{marginTop:10}}><span style={s.badge(sentBadge)}>{r.rating>=4?'😊 Positive':r.rating===3?'😐 Neutral':'😞 Negative'}</span></div>
                 </div>
               )
-            })
-          )}
-        </div>
-      </main>
+            })}
+          </div>
+        )}
+      </PageLayout>
 
-      {/* REVIEW MODAL */}
-      {showModal && selectedItem && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}
-          onClick={e => { if (e.target === e.currentTarget) setShowModal(false) }}>
-          <div style={{ background: '#fff', borderRadius: 14, padding: 28, width: 460, maxWidth: '95vw', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <h3 style={{ fontSize: 17, fontWeight: 700, margin: 0 }}>Leave a Review</h3>
-              <button onClick={() => setShowModal(false)}
-                style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#9b978f' }}>✕</button>
+      {showAdd && (
+        <div style={s.modal} onClick={e=>{if(e.target===e.currentTarget)setShowAdd(false)}}>
+          <div style={{...s.modalCard,width:480,maxWidth:'95vw'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+              <h3 style={{fontSize:18,fontWeight:800,margin:0,color:T.ink,fontFamily:"'Cormorant Garamond',serif"}}>Write a Review</h3>
+              <button onClick={()=>setShowAdd(false)} style={{background:'none',border:'none',fontSize:20,cursor:'pointer',color:T.muted}}>✕</button>
             </div>
-
-            {/* Item Info */}
-            <div style={{ background: '#f4f3f0', borderRadius: 8, padding: '12px 14px', marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>
-                {selectedItem.type === 'bundle'
-                  ? `Bundle (${selectedItem.bundle_service?.length || 0} services)`
-                  : selectedItem.service?.service_name}
-              </div>
-              <div style={{ fontSize: 12, color: '#9b978f', marginTop: 4 }}>
-                {selectedItem.type === 'bundle'
-                  ? selectedItem.bundle_service?.map(bs => bs.service?.service_name).join(', ')
-                  : `by ${selectedItem.service_provider?.users?.first_name} ${selectedItem.service_provider?.users?.last_name}`}
-              </div>
-              <div style={{ fontSize: 11, color: '#9b978f', marginTop: 2 }}>
-                Service Date: {selectedItem.service_date}
-              </div>
-            </div>
-
-            {/* Star Rating */}
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 12, fontWeight: 500, color: '#6b6860', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 8 }}>
-                Rating
-              </label>
-              <div style={{ display: 'flex', gap: 6 }}>
-                {[1, 2, 3, 4, 5].map(star => (
-                  <span key={star} onClick={() => setRating(star)}
-                    style={{ fontSize: 32, cursor: 'pointer', color: star <= rating ? '#f9a825' : '#d4d2cc', transition: 'color .15s' }}>
-                    ★
-                  </span>
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:9,fontWeight:800,color:T.muted,textTransform:'uppercase',letterSpacing:2,display:'block',marginBottom:6}}>Select Booking</label>
+              <select value={form.booking_id} onChange={e=>setForm({...form,booking_id:e.target.value})} style={{...s.select,width:'100%'}}>
+                <option value="">— Choose a completed booking —</option>
+                {completedBookings.map(b=>(
+                  <option key={b.booking_id} value={b.booking_id}>{b.service?.service_name} — {b.service_date}</option>
                 ))}
+              </select>
+            </div>
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:9,fontWeight:800,color:T.muted,textTransform:'uppercase',letterSpacing:2,display:'block',marginBottom:10}}>Rating</label>
+              <div style={{display:'flex',gap:8}}>
+                {[1,2,3,4,5].map(star=>(
+                  <div key={star} onClick={()=>setForm({...form,rating:star})}
+                    style={{width:40,height:40,borderRadius:8,border:`2px solid ${form.rating>=star?'#d97706':T.mixBorder}`,background:form.rating>=star?'#fff7ed':T.mixCard,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:20,transition:'all 0.15s'}}>
+                    {form.rating>=star?'★':'☆'}
+                  </div>
+                ))}
+                <span style={{fontSize:13,color:T.muted,marginLeft:8,alignSelf:'center',fontWeight:700}}>{form.rating}/5</span>
               </div>
             </div>
-
-            {/* Comment */}
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ fontSize: 12, fontWeight: 500, color: '#6b6860', textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
-                Your Comment
-              </label>
-              <textarea value={comment} onChange={e => setComment(e.target.value)}
-                rows={4} placeholder="Share your experience..."
-                style={{ width: '100%', border: '1.5px dashed #d4d2cc', borderRadius: 7, padding: '10px 13px', fontSize: 13, fontFamily: 'Arial', outline: 'none', background: '#f4f3f0', resize: 'vertical', boxSizing: 'border-box' }} />
+            <div style={{marginBottom:20}}>
+              <label style={{fontSize:9,fontWeight:800,color:T.muted,textTransform:'uppercase',letterSpacing:2,display:'block',marginBottom:6}}>Comment</label>
+              <textarea placeholder="Share your experience..." value={form.comment} onChange={e=>setForm({...form,comment:e.target.value})} rows={4} style={{...s.input,width:'100%',resize:'vertical'}} />
             </div>
-
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowModal(false)}
-                style={{ padding: '9px 18px', background: 'transparent', border: '1.5px solid #a8a49c', borderRadius: 7, cursor: 'pointer', fontSize: 13 }}>
-                Cancel
-              </button>
-              <button onClick={submitReview} disabled={submitting}
-                style={{ padding: '9px 18px', background: '#3d5afe', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
-                {submitting ? 'Submitting...' : 'Submit Review'}
-              </button>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={()=>setShowAdd(false)} style={s.btnGhost}>Cancel</button>
+              <button onClick={submitReview} disabled={saving} style={s.btn}>{saving?'Submitting…':'Submit Review'}</button>
             </div>
           </div>
         </div>

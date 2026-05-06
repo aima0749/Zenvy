@@ -1,3 +1,4 @@
+import './index.css'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
 
@@ -35,72 +36,34 @@ export default function App() {
     <BrowserRouter>
       <Routes>
 
-        {/* Public Routes */}
+        {/* Public */}
         <Route path="/" element={<Landing />} />
         <Route path="/auth" element={<Auth />} />
 
-        {/* Customer Routes */}
-        <Route path="/customer/dashboard" element={
-          <ProtectedRoute role="customer"><CustomerDashboard /></ProtectedRoute>
-        } />
-        <Route path="/customer/browse" element={
-          <ProtectedRoute role="customer"><BrowseServices /></ProtectedRoute>
-        } />
-        <Route path="/customer/service/:id" element={
-          <ProtectedRoute role="customer"><ServiceDetail /></ProtectedRoute>
-        } />
-        <Route path="/customer/bookings" element={
-          <ProtectedRoute role="customer"><MyBookings /></ProtectedRoute>
-        } />
-        <Route path="/customer/bundles" element={
-          <ProtectedRoute role="customer"><BundleOffers /></ProtectedRoute>
-        } />
-        <Route path="/customer/payments" element={
-          <ProtectedRoute role="customer"><Payments /></ProtectedRoute>
-        } />
-        <Route path="/customer/reviews" element={
-          <ProtectedRoute role="customer"><MyReviews /></ProtectedRoute>
-        } />
+        {/* Customer */}
+        <Route path="/customer/dashboard" element={<ProtectedRoute role="customer"><CustomerDashboard /></ProtectedRoute>} />
+        <Route path="/customer/browse"    element={<ProtectedRoute role="customer"><BrowseServices /></ProtectedRoute>} />
+        <Route path="/customer/service/:id" element={<ProtectedRoute role="customer"><ServiceDetail /></ProtectedRoute>} />
+        <Route path="/customer/bookings"  element={<ProtectedRoute role="customer"><MyBookings /></ProtectedRoute>} />
+        <Route path="/customer/bundles"   element={<ProtectedRoute role="customer"><BundleOffers /></ProtectedRoute>} />
+        <Route path="/customer/payments"  element={<ProtectedRoute role="customer"><Payments /></ProtectedRoute>} />
+        <Route path="/customer/reviews"   element={<ProtectedRoute role="customer"><MyReviews /></ProtectedRoute>} />
 
-        {/* Provider Routes */}
-        <Route path="/provider/dashboard" element={
-          <ProtectedRoute role="service_provider"><ProviderDashboard /></ProtectedRoute>
-        } />
-        <Route path="/provider/services" element={
-          <ProtectedRoute role="service_provider"><MyServices /></ProtectedRoute>
-        } />
-        <Route path="/provider/availability" element={
-          <ProtectedRoute role="service_provider"><Availability /></ProtectedRoute>
-        } />
-        <Route path="/provider/bookings" element={
-          <ProtectedRoute role="service_provider"><AssignedBookings /></ProtectedRoute>
-        } />
-        <Route path="/provider/bundles" element={
-          <ProtectedRoute role="service_provider"><BundleTasks /></ProtectedRoute>
-        } />
-        <Route path="/provider/reviews" element={
-          <ProtectedRoute role="service_provider"><ProviderReviews /></ProtectedRoute>
-        } />
+        {/* Provider */}
+        <Route path="/provider/dashboard"    element={<ProtectedRoute role="service_provider"><ProviderDashboard /></ProtectedRoute>} />
+        <Route path="/provider/services"     element={<ProtectedRoute role="service_provider"><MyServices /></ProtectedRoute>} />
+        <Route path="/provider/availability" element={<ProtectedRoute role="service_provider"><Availability /></ProtectedRoute>} />
+        <Route path="/provider/bookings"     element={<ProtectedRoute role="service_provider"><AssignedBookings /></ProtectedRoute>} />
+        <Route path="/provider/bundles"      element={<ProtectedRoute role="service_provider"><BundleTasks /></ProtectedRoute>} />
+        <Route path="/provider/reviews"      element={<ProtectedRoute role="service_provider"><ProviderReviews /></ProtectedRoute>} />
 
-        {/* Admin Routes */}
-        <Route path="/admin/dashboard" element={
-          <ProtectedRoute role="admin"><AdminDashboard /></ProtectedRoute>
-        } />
-        <Route path="/admin/users" element={
-          <ProtectedRoute role="admin"><AdminUsers /></ProtectedRoute>
-        } />
-        <Route path="/admin/bookings" element={
-          <ProtectedRoute role="admin"><AdminBookings /></ProtectedRoute>
-        } />
-        <Route path="/admin/services" element={
-          <ProtectedRoute role="admin"><AdminServices /></ProtectedRoute>
-        } />
-        <Route path="/admin/payments" element={
-          <ProtectedRoute role="admin"><AdminPayments /></ProtectedRoute>
-        } />
-        <Route path="/admin/reviews" element={
-          <ProtectedRoute role="admin"><AdminReviews /></ProtectedRoute>
-        } />
+        {/* Admin */}
+        <Route path="/admin/dashboard" element={<ProtectedRoute role="admin"><AdminDashboard /></ProtectedRoute>} />
+        <Route path="/admin/users"     element={<ProtectedRoute role="admin"><AdminUsers /></ProtectedRoute>} />
+        <Route path="/admin/bookings"  element={<ProtectedRoute role="admin"><AdminBookings /></ProtectedRoute>} />
+        <Route path="/admin/services"  element={<ProtectedRoute role="admin"><AdminServices /></ProtectedRoute>} />
+        <Route path="/admin/payments"  element={<ProtectedRoute role="admin"><AdminPayments /></ProtectedRoute>} />
+        <Route path="/admin/reviews"   element={<ProtectedRoute role="admin"><AdminReviews /></ProtectedRoute>} />
 
       </Routes>
     </BrowserRouter>
